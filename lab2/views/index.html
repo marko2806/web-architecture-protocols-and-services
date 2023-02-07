@@ -1,0 +1,179 @@
+<html>
+
+    <head>
+        <title>Chat</title>
+    </head>
+
+    <body>
+        <select onchange="onSelectionChange()" id="protocol-selector">
+            <option value="polling">Polling</option>
+            <option value="long-polling">Long polling</option>
+            <option value="web-socket" selected>WebSocket</option>
+        </select>
+        <form method="POST" onsubmit="event.preventDefault(); sendMessage();" id="messageForm">
+            <input id="new-message-content" type="text" name="message" />
+            <input type="submit" value="Send" />
+        </form>
+        <div id="message-container">
+
+        </div>
+        <script>
+            let pollingActive = true;
+            let longPollingActive = false;
+            let webScoketActive = false;
+
+            let sendMessage = sendMessageHttp;
+            let pollingCaller = null;
+            let ws = null
+            let xhr = null;
+
+            function onSelectionChange() {
+                let val = document.getElementById("protocol-selector").value;
+                // close web socket if open
+                if (webScoketActive) {
+                    if (ws)
+                        ws.close();
+                    ws = null;
+                }
+                // cancel set interval from polling
+                if (pollingCaller) {
+                    clearInterval(pollingCaller);
+                    if (xhr)
+                        xhr.abort();
+                }
+                // cancel requests from long polling
+                if (longPollingActive)
+                    if (xhr)
+                        xhr.abort();
+
+                if (val == "web-socket") {
+                    pollingActive = false;
+                    longPollingActive = false;
+                    webScoketActive = true;
+                    sendMessage = sendMessageWebSocket;
+                    ws = new WebSocket(`ws://localhost:3000?id=${localStorage.getItem("chat_id")}`)
+                    ws.onmessage = async (event) => {
+                        let message = JSON.parse(event.data);
+                        let div = document.createElement("div");
+                        div.innerText = message.content
+                        document.getElementById("message-container").append(div);
+                    }
+                }
+                if (val == "long-polling") {
+                    pollingActive = false;
+                    longPollingActive = true;
+                    webScoketActive = false;
+                    sendMessage = sendMessageHttp;
+                    performLongPolling();
+                }
+                if (val == "polling") {
+                    pollingActive = true;
+                    longPollingActive = false;
+                    webScoketActive = false;
+                    sendMessage = sendMessageHttp;
+                    pollingCaller = setInterval(performPolling, 10 * 1000);
+                }
+            }
+
+            if (localStorage.getItem("chat_id") == null) {
+                let xhr = new XMLHttpRequest();
+                xhr.open("GET", "/assign-id");
+                xhr.onload = () => {
+                    if (xhr.response) {
+                        messages = JSON.parse(xhr.response).messages;
+                        if (xhr.status == 200) {
+                            localStorage.setItem("chat_id", xhr.response)
+                        }
+                    }
+                }
+                xhr.send();
+            }
+
+            function performLongPolling() {
+                let id = localStorage.getItem("chat_id");
+                xhr = new XMLHttpRequest();
+                xhr.open("GET", `/long-polling/messages?id=${id}`);
+                xhr.onload = () => {
+                    if (xhr.response) {
+                        messages = JSON.parse(xhr.response).messages;
+                        if (xhr.status == 200) {
+                            for (let message of messages) {
+                                let div = document.createElement("div");
+                                div.innerText = message
+                                document.getElementById("message-container").append(div);
+                            }
+
+                        }
+                    }
+                    performLongPolling();
+                }
+                xhr.send();
+            }
+
+            function performPolling() {
+                let xhr = new XMLHttpRequest();
+                let id = localStorage.getItem("chat_id");
+                xhr.open("GET", `/polling/messages?id=${id}`);
+                xhr.onload = () => {
+                    if (xhr.response) {
+                        messages = JSON.parse(xhr.response).messages;
+                        if (xhr.status == 200) {
+                            for (let message of messages) {
+                                let div = document.createElement("div");
+                                div.innerText = message
+                                document.getElementById("message-container").append(div);
+                            }
+
+                        }
+                    }
+                }
+
+                xhr.send();
+            }
+
+            function sendMessageWebSocket() {
+                let formEl = document.forms.messageForm;
+                let formData = new FormData(formEl);
+                ws.send(JSON.stringify({
+                    "id": localStorage.getItem("chat_id"),
+                    "content": formData.get("message")
+                }));
+
+                let div = document.createElement("div");
+                div.innerText = formData.get("message")
+                document.getElementById("message-container").append(div);
+            }
+
+            function sendMessageHttp() {
+                let formEl = document.forms.messageForm;
+                let id = localStorage.getItem("chat_id")
+                let xhr = new XMLHttpRequest();
+
+                let url = "";
+                if (pollingActive) {
+                    url += "/polling"
+                } else if (longPollingActive) {
+                    url += "/long-polling"
+                }
+                url += "/messages"
+                xhr.open("POST", url);
+                xhr.onload = () => {
+                    if (this.status == 200) {
+                        document.getElementById("new-message-content").value = null;
+
+                        let div = document.createElement("div");
+                        div.innerText = message
+                        document.getElementById("message-container").append(div);
+                    }
+                }
+
+                let formData = new FormData(formEl);
+                formData.append("id", id);
+                xhr.send(formData);
+            }
+
+            onSelectionChange("polling")
+        </script>
+    </body>
+
+</html>
